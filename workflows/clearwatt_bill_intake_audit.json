@@ -1,0 +1,112 @@
+{
+  "name": "ClearWatt - Utility Bill Intake and Audit (Starter)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "clearwatt-bill-audit",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "node-webhook-001",
+      "name": "Receive bill PDF",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "clearwatt-bill-audit"
+    },
+    {
+      "parameters": {
+        "operation": "pdf",
+        "binaryPropertyName": "data",
+        "destinationOutputField": "extractedText"
+      },
+      "id": "node-pdf-002",
+      "name": "Extract PDF text",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        480,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const text = String($json.extractedText ?? $json.text ?? '');\nconst warnings = [], findings = [];\nfunction match(patterns){ for(const p of patterns){const m=text.match(p); if(m?.[1]!==undefined)return String(m[1]).trim();} return null; }\nfunction num(v){if(v==null)return null;const n=Number(String(v).replace(/,/g,'').replace(/₹|Rs\\.?|INR/ig,'').trim());return Number.isFinite(n)?n:null;}\nconst accountId=match([/(?:consumer\\s*(?:no\\.?|number|id)|account\\s*(?:no\\.?|number)|k\\.?\\s*no\\.?)\\s*[:#-]?\\s*([A-Z0-9\\/-]{5,})/i]);\nconst billNumber=match([/bill\\s*(?:no\\.?|number|id)\\s*[:#-]?\\s*([A-Z0-9\\/-]{4,})/i]);\nconst units=num(match([/(?:units\\s*consumed|consumption(?:\\s*in\\s*kwh)?|energy\\s*consumed|billed\\s*units)\\s*[:-]?\\s*([\\d,]+(?:\\.\\d+)?)/i]));\nconst amount=num(match([/(?:net\\s*amount\\s*payable|total\\s*amount\\s*payable|amount\\s*payable|current\\s*bill\\s*amount|bill\\s*amount)\\s*[:-]?\\s*(?:₹|Rs\\.?|INR)?\\s*([\\d,]+(?:\\.\\d{1,2})?)/i]));\nconst previous=num(match([/(?:previous\\s*reading|old\\s*reading|last\\s*reading)\\s*[:-]?\\s*([\\d,]+(?:\\.\\d+)?)/i]));\nconst current=num(match([/(?:current\\s*reading|present\\s*reading|latest\\s*reading)\\s*[:-]?\\s*([\\d,]+(?:\\.\\d+)?)/i]));\nif(!text.trim()) warnings.push('No searchable text extracted. This may be a scanned PDF; OCR is not included in this starter.');\nif(!accountId) warnings.push('Consumer/account number not confidently detected.');\nif(units===null) warnings.push('Billed units not confidently detected.');\nif(amount===null) warnings.push('Payable amount not confidently detected.');\nif(previous!==null && current!==null){\n const delta=current-previous;\n if(delta<0) findings.push({code:'READING_DECREASE',severity:'high',message:'Current reading is lower than previous reading.',evidence:{previous,current,delta}});\n if(units!==null && delta>=0 && Math.abs(delta-units)>Math.max(2,units*0.03)) findings.push({code:'READING_UNITS_MISMATCH',severity:'medium',message:'Reading difference does not closely match billed units; check multiplier, adjustments, and period.',evidence:{previous,current,readingDifference:delta,billedUnits:units}});\n}\nif(units!==null && units<0) findings.push({code:'NEGATIVE_UNITS',severity:'high',message:'Billed units are negative.',evidence:{units}});\nif(amount!==null && amount<0) findings.push({code:'NEGATIVE_AMOUNT',severity:'high',message:'Payable amount is negative; verify credits and adjustments.',evidence:{amount}});\nif(units>0 && amount!==null && amount/units>30) findings.push({code:'HIGH_EFFECTIVE_RATE',severity:'low',message:'Effective bill amount per unit exceeds a broad screening threshold; this is not a tariff determination.',evidence:{amount,units,effectiveRate:Number((amount/units).toFixed(2))}});\nconst fields={accountId,billNumber,billedUnitsKwh:units,billAmount:amount,previousReading:previous,currentReading:current};\nconst coverage=Math.round(Object.values(fields).filter(v=>v!==null).length/Object.keys(fields).length*100);\nreturn {json:{product:'ClearWatt',sourceFile:'uploaded-bill.pdf',receivedAt:new Date().toISOString(),extractedFields:fields,extractionCoveragePercent:text.trim()?coverage:0,findings,warnings,outcome:warnings.length?'NEEDS_REVIEW':findings.length?'FLAGGED_FOR_REVIEW':'NO_RULES_TRIGGERED',limitations:['Screening signals are not proof of a billing error or faulty meter.','Official tariff applicability is not verified.','Image-only/scanned PDFs require a separate local OCR step.','Generic patterns must be validated against each DISCOM layout.'],extractedTextPreview:text.slice(0,1200)}};"
+      },
+      "id": "node-audit-003",
+      "name": "Validate and screen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        740,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "node-response-004",
+      "name": "Return audit report",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1000,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Receive bill PDF": {
+      "main": [
+        [
+          {
+            "node": "Extract PDF text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract PDF text": {
+      "main": [
+        [
+          {
+            "node": "Validate and screen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate and screen": {
+      "main": [
+        [
+          {
+            "node": "Return audit report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

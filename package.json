@@ -1,0 +1,15 @@
+{
+  "name": "clearwatt-utility-intelligence",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "concurrently --kill-others --names api,frontend \"npm run dev:api\" \"npm run dev:frontend\"",
+    "dev:api": "cd backend && uv run --with-requirements requirements.txt python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "build": "npm --prefix frontend run build",
+    "preview": "npm --prefix frontend run preview"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.5"
+  }
+}
